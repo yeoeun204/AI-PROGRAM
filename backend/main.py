@@ -23,7 +23,6 @@ from weight_engine import update_node_weight
 from error_analyzer import apply_causal_rules, multi_agent_analysis
 
 
-# ── 앱 초기화 ────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -46,7 +45,6 @@ if os.path.isdir(FRONTEND_DIR):
 # ── 헬퍼 ────────────────────────────────────
 
 def _build_tree(nodes: list[GraphNode]) -> list[dict]:
-    """모든 노드를 메모리에서 트리로 조립합니다 (lazy loading 없이)."""
     node_map = {n.id: {
         "id": n.id,
         "concept": n.concept,
@@ -77,19 +75,6 @@ def _extract_text_from_pdf(data: bytes) -> str:
     return "\n".join(parts)
 
 
-async def _find_leaf_node(lecture_id: int, db: AsyncSession) -> GraphNode | None:
-    """Lazy loading 없이 leaf 노드를 찾습니다."""
-    result = await db.execute(
-        select(GraphNode).where(GraphNode.lecture_id == lecture_id)
-    )
-    all_nodes = result.scalars().all()
-    if not all_nodes:
-        return None
-    parent_ids = {n.parent_id for n in all_nodes if n.parent_id is not None}
-    leaf_nodes = [n for n in all_nodes if n.id not in parent_ids]
-    return leaf_nodes[0] if leaf_nodes else all_nodes[0]
-
-
 # ── 라우팅 ───────────────────────────────────
 
 @app.get("/")
@@ -99,8 +84,6 @@ async def root():
         return FileResponse(index_path)
     return {"message": "AI 학습 최적화 플랫폼"}
 
-
-# ─── 강의 ────────────────────────────────────
 
 @app.post("/api/lectures/upload")
 async def upload_lecture(
@@ -113,6 +96,15 @@ async def upload_lecture(
         raw = await file.read()
         if file.filename.lower().endswith(".pdf"):
             content = _extract_text_from_pdf(raw)
+        elif file.filename.lower().endswith((".pptx", ".ppt")):
+            from pptx import Presentation
+            prs = Presentation(io.BytesIO(raw))
+            parts = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        parts.append(shape.text.strip())
+            content = "\n".join(parts)
         else:
             content = raw.decode("utf-8", errors="ignore")
     elif text_content:
@@ -127,8 +119,9 @@ async def upload_lecture(
     db.add(lecture)
     await db.flush()
 
+    # 그래프 먼저 생성 → 노드 목록을 퀴즈 생성에 전달
     nodes = await build_graph(lecture.id, content, db)
-    quizzes = await generate_quizzes(lecture.id, content, db)
+    quizzes = await generate_quizzes(lecture.id, content, nodes, db)  # ← nodes 전달
 
     await db.refresh(lecture)
     return {
@@ -142,10 +135,9 @@ async def upload_lecture(
 @app.get("/api/lectures")
 async def list_lectures(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Lecture).order_by(Lecture.created_at.desc()))
-    lectures = result.scalars().all()
     return [
         {"id": l.id, "title": l.title, "created_at": l.created_at.isoformat()}
-        for l in lectures
+        for l in result.scalars().all()
     ]
 
 
@@ -159,11 +151,8 @@ async def delete_lecture(lecture_id: int, db: AsyncSession = Depends(get_db)):
     return {"message": "삭제 완료"}
 
 
-# ─── 지식 그래프 ─────────────────────────────
-
 @app.get("/api/lectures/{lecture_id}/graph")
 async def get_graph(lecture_id: int, db: AsyncSession = Depends(get_db)):
-    # 모든 노드를 한 번에 불러와 Python에서 트리로 조립
     result = await db.execute(
         select(GraphNode)
         .where(GraphNode.lecture_id == lecture_id)
@@ -175,19 +164,15 @@ async def get_graph(lecture_id: int, db: AsyncSession = Depends(get_db)):
     return _build_tree(nodes)
 
 
-# ─── 퀴즈 ────────────────────────────────────
-
 @app.get("/api/lectures/{lecture_id}/quizzes")
 async def get_quizzes(lecture_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Quiz)
-        .where(Quiz.lecture_id == lecture_id)
-        .order_by(Quiz.difficulty)
+        select(Quiz).where(Quiz.lecture_id == lecture_id).order_by(Quiz.difficulty)
     )
-    quizzes = result.scalars().all()
     return [
         {
             "id": q.id,
+            "node_id": q.node_id,
             "question": q.question,
             "model_answer": q.model_answer,
             "key_points": json.loads(q.key_points),
@@ -195,7 +180,7 @@ async def get_quizzes(lecture_id: int, db: AsyncSession = Depends(get_db)):
             "answer_type": q.answer_type,
             "recommended_time": q.recommended_time,
         }
-        for q in quizzes
+        for q in result.scalars().all()
     ]
 
 
@@ -212,7 +197,7 @@ async def submit_quiz_answer(
 
     key_points = json.loads(quiz.key_points)
 
-    # 1. 답변 평가
+    # 1. 채점
     try:
         if quiz.answer_type == "quantitative":
             eval_result = evaluate_quantitative_answer(user_answer, quiz.model_answer)
@@ -220,17 +205,12 @@ async def submit_quiz_answer(
             eval_result = await evaluate_text_answer(user_answer, quiz.model_answer, key_points)
     except Exception:
         eval_result = {
-            "cosine_similarity": 0.0,
-            "keyword_score": 0.0,
-            "final_score": 0.0,
-            "matched_keywords": 0,
-            "total_keywords": len(key_points),
-            "status": "error",
-            "color": "red",
-            "is_slip": False,
+            "cosine_similarity": 0.0, "keyword_score": 0.0, "final_score": 0.0,
+            "matched_keywords": 0, "total_keywords": len(key_points),
+            "status": "error", "color": "red", "is_slip": False,
         }
 
-    # 2. 시도 기록 저장
+    # 2. 시도 기록
     attempt = QuizAttempt(
         quiz_id=quiz_id,
         lecture_id=quiz.lecture_id,
@@ -248,41 +228,41 @@ async def submit_quiz_answer(
     llm_analysis = None
     causal_analysis = None
 
-    # 3. 오답일 때만 심층 분석 (실패해도 전체가 죽지 않도록 try/except)
+    # 3. 오답 심층 분석
     if eval_result["status"] != "correct":
         try:
-            llm_analysis = await multi_agent_analysis(
-                quiz.question, user_answer, quiz.model_answer
-            )
+            llm_analysis = await multi_agent_analysis(quiz.question, user_answer, quiz.model_answer)
             attempt.error_type = llm_analysis.get("error_type")
         except Exception:
             llm_analysis = {
-                "agent_a": "분석 불가",
-                "agent_b": "분석 불가",
+                "agent_a": "분석 불가", "agent_b": "분석 불가",
                 "error_type": "mistake",
                 "feedback": "모범 답안과 직접 비교해보세요.",
             }
 
         try:
-            target_node = await _find_leaf_node(quiz.lecture_id, db)
+            # 퀴즈에 연결된 노드 사용 (없으면 첫 번째 노드 fallback)
+            if quiz.node_id:
+                target_node = await db.get(GraphNode, quiz.node_id)
+            else:
+                result = await db.execute(
+                    select(GraphNode).where(GraphNode.lecture_id == quiz.lecture_id).limit(1)
+                )
+                target_node = result.scalar_one_or_none()
+
             if target_node:
                 cos_sim = eval_result.get("cosine_similarity", 0.0)
                 causal_analysis = await apply_causal_rules(
                     target_node, eval_result["final_score"], cos_sim, db
                 )
                 await update_node_weight(
-                    target_node,
-                    eval_result["final_score"],
-                    time_spent,
-                    eval_result.get("is_slip", False),
-                    db,
-                    mode="quiz",
+                    target_node, eval_result["final_score"],
+                    time_spent, eval_result.get("is_slip", False), db
                 )
         except Exception:
             causal_analysis = None
 
     await db.commit()
-
     return {
         "attempt_id": attempt.id,
         "evaluation": eval_result,
@@ -290,8 +270,6 @@ async def submit_quiz_answer(
         "causal_analysis": causal_analysis,
     }
 
-
-# ─── 취약 노드 ───────────────────────────────
 
 @app.get("/api/lectures/{lecture_id}/weak-nodes")
 async def get_weak_nodes(lecture_id: int, db: AsyncSession = Depends(get_db)):
@@ -301,7 +279,6 @@ async def get_weak_nodes(lecture_id: int, db: AsyncSession = Depends(get_db)):
         .where(NodeScore.lecture_id == lecture_id)
         .order_by(NodeScore.final_weight.desc())
     )
-    rows = result.all()
     return [
         {
             "node_id": row.GraphNode.id,
@@ -312,7 +289,7 @@ async def get_weak_nodes(lecture_id: int, db: AsyncSession = Depends(get_db)):
             "attempt_count": row.NodeScore.attempt_count,
             "level": row.GraphNode.level,
         }
-        for row in rows
+        for row in result.all()
     ]
 
 
