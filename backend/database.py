@@ -5,7 +5,11 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = f"sqlite+aiosqlite:///{os.path.join(BASE_DIR, 'study.db')}"
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
 
 AsyncSessionLocal = sessionmaker(
     bind=engine,
@@ -21,6 +25,6 @@ async def get_db():
         yield session
 
 async def init_db():
-    from models import Lecture, GraphNode, Quiz  # noqa: F401
+    from models import Lecture, GraphNode, Quiz, QuizAttempt, NodeScore  # noqa
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
