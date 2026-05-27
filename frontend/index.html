@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LearnGraph — AI 학습 최적화</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="app-wrapper">
+
+  <!-- ── 사이드바 ── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">Learn<span>Graph</span></div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-item active" data-page="upload" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 10l-4-4-4 4M12 6v10"/></svg>
+        강의 업로드
+      </a>
+      <a class="nav-item" data-page="graph" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v4M12 11l-5 6M12 11l5 6"/></svg>
+        지식 그래프
+      </a>
+      <a class="nav-item" data-page="quiz" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+        퀴즈 풀기
+      </a>
+      <a class="nav-item" data-page="weakness" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a10 10 0 100 20A10 10 0 0012 2z"/><path d="M12 8v4l3 3"/></svg>
+        취약점 분석
+      </a>
+    </nav>
+
+    <div style="padding: 0 12px; border-top: 1px solid var(--border); padding-top: 16px; flex:1; display:flex; flex-direction:column; overflow:hidden;">
+      <p class="sidebar-lectures-title">저장된 강의</p>
+      <div class="sidebar-lectures" id="lectureList">
+        <p style="padding:10px 14px;font-size:.82rem;color:var(--text-muted);">아직 없음</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── 메인 ── -->
+  <main class="main">
+
+    <!-- 업로드 -->
+    <section class="page active" id="page-upload">
+      <div class="page-header">
+        <h1>강의 자료 업로드</h1>
+        <p>PDF 또는 텍스트를 업로드하면 AI가 지식 그래프와 퀴즈를 자동으로 생성합니다.</p>
+      </div>
+      <div class="upload-card">
+        <h2>새 강의 추가</h2>
+        <div class="form-group">
+          <label for="lectureTitle">강의 제목</label>
+          <input type="text" id="lectureTitle" placeholder="예: 운영체제 3강 — 프로세스와 스레드" />
+        </div>
+        <div class="form-group">
+          <label>PDF 파일 업로드</label>
+          <div class="drop-zone" id="dropZone">
+            <input type="file" id="fileInput" accept=".pdf,.txt" />
+            <div class="drop-zone-icon">📄</div>
+            <p><strong>파일을 드래그</strong>하거나 클릭해서 선택하세요</p>
+            <p style="font-size:.78rem;margin-top:4px;">PDF, TXT 파일 지원</p>
+            <p class="file-name" id="fileName"></p>
+          </div>
+        </div>
+        <div class="divider"><span>또는 텍스트 직접 입력</span></div>
+        <div class="form-group">
+          <label for="textContent">강의 내용 붙여넣기</label>
+          <textarea id="textContent" placeholder="강의 노트, 교재 내용 등을 여기에 붙여넣으세요..."></textarea>
+        </div>
+        <button class="btn btn-primary" id="uploadBtn" onclick="uploadLecture()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M13 2v7h7"/></svg>
+          지식 그래프 + 퀴즈 생성하기
+        </button>
+      </div>
+    </section>
+
+    <!-- 지식 그래프 -->
+    <section class="page" id="page-graph">
+      <div class="page-header">
+        <h1>지식 그래프</h1>
+        <p>강의 개념들의 계층적 구조입니다. 노드를 클릭하면 설명이 펼쳐집니다.</p>
+      </div>
+      <div class="graph-container">
+        <div class="graph-empty" id="graphEmpty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48" style="opacity:.3"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v4M12 11l-5 6M12 11l5 6"/></svg>
+          <p style="margin-top:12px;">좌측에서 강의를 선택하세요.</p>
+        </div>
+        <div class="tree" id="graphTree" style="display:none;"></div>
+      </div>
+    </section>
+
+    <!-- 퀴즈 -->
+    <section class="page" id="page-quiz">
+      <div class="page-header">
+        <h1>주관식 퀴즈</h1>
+        <p>답변을 작성하고 제출하면 AI가 코사인 유사도 + 키워드 기반으로 채점합니다.</p>
+      </div>
+      <div class="quiz-controls">
+        <button class="filter-btn active" onclick="filterQuiz('all',this)">전체</button>
+        <button class="filter-btn easy" onclick="filterQuiz('easy',this)">🟢 쉬움</button>
+        <button class="filter-btn medium" onclick="filterQuiz('medium',this)">🟡 보통</button>
+        <button class="filter-btn hard" onclick="filterQuiz('hard',this)">🔴 어려움</button>
+      </div>
+      <div id="quizList">
+        <div class="graph-empty"><p>좌측에서 강의를 선택하세요.</p></div>
+      </div>
+    </section>
+
+    <!-- 취약점 분석 -->
+    <section class="page" id="page-weakness">
+      <div class="page-header">
+        <h1>취약점 분석</h1>
+        <p>가중치 엔진이 계산한 취약 노드입니다. 가중치가 높을수록 집중 학습이 필요합니다.</p>
+      </div>
+      <div id="weaknessContent">
+        <div class="graph-empty"><p>퀴즈를 풀면 취약점이 분석됩니다.</p></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- 로딩 -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <p class="loading-text" id="loadingText">AI가 분석 중입니다...</p>
+</div>
+
+<!-- 토스트 -->
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
