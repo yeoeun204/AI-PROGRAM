@@ -1,5 +1,5 @@
 // ─── Config ───────────────────────────────────
-const API = 'http://localhost:8000/api';
+const API = 'https://ai-program.onrender.com/api';
 
 // ─── State ────────────────────────────────────
 let currentLectureId = null;
