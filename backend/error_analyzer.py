@@ -131,7 +131,7 @@ Agent C (최종 분류): mistake(개념 오해) / slip(단순 실수) / language
   "agent_a": "논리 오류 분석 (1~2문장)",
   "agent_b": "단순 실수 분석 (1~2문장)",
   "error_type": "mistake|slip|language",
-  "feedback": "학생에게 줄 피드백 (2~3문장)"
+  "feedback": "학생에게 줄 구체적인 피드백. 틀린 이유와 어떤 개념을 다시 공부해야 하는지, 올바른 방향을 3~5문장으로 상세히 작성하세요."
 }}"""
 
     try:
